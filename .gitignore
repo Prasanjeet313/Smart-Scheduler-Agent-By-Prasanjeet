@@ -1,0 +1,13 @@
+# Ignore credentials and tokens
+credentials.json
+token.json
+context.pkl
+.env
+
+# Ignore OS or editor files
+*.pyc
+__pycache__/
+.DS_Store
+
+# Ignore demo video (optional, if you don't want to upload it)
+# demo.mp4
