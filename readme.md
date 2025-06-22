@@ -40,14 +40,9 @@ Modular structure: Easily extendable to recurring events, reminders, or multiple
 
 1. Clone repo and install requirements:
   ```pip install -r requirements.txt```
-2. Setup environment variables
-Create a .env file:
+2. Setup environment variables:
+  Create a .env file:
   ```GEMINI_API_KEY=your_gemini_api_key```
-3. Add Google Calendar credentials
-Go to Google Cloud Console
-
-Enable Google Calendar API
-
-Download ```credentials.json``` and place it in the project root
-4. Run the assistant
+3. Add Google Calendar credentials ---> Go to Google Cloud Console---->Enable Google Calendar API---->Download ```credentials.json``` and place it in the project root
+4. Run the assistant:
   ```python main.ipynb```
