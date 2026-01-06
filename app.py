@@ -324,7 +324,16 @@ def main():
     # Sidebar for API Key and Settings
     with st.sidebar:
         st.header("⚙️ Settings")
-        api_key = st.text_input("🔑 Gemini API Key", type="password", help="Enter your Gemini API key")
+        
+        # Store API key in session state to persist it
+        if 'api_key' not in st.session_state:
+            st.session_state.api_key = ""
+        
+        api_key_input = st.text_input("🔑 Gemini API Key", value=st.session_state.api_key, type="password", help="Enter your Gemini API key")
+        if api_key_input:
+            st.session_state.api_key = api_key_input
+        
+        api_key = st.session_state.api_key
         
         st.markdown("---")
         st.subheader("📅 Google Calendar Authentication")
@@ -332,6 +341,17 @@ def main():
         # Check if user is already authenticated
         if 'credentials' in st.session_state:
             st.success("✅ Connected to Google Calendar")
+            # Try to get user info
+            try:
+                service = get_calendar_service()
+                if service:
+                    # Get calendar list to show user email
+                    calendar_list = service.calendarList().get(calendarId='primary').execute()
+                    user_email = calendar_list.get('id', 'User')
+                    st.info(f"👤 Logged in as: **{user_email}**")
+            except:
+                pass
+            
             if st.button("🔓 Disconnect"):
                 del st.session_state['credentials']
                 if 'oauth_flow' in st.session_state:
@@ -377,30 +397,35 @@ def main():
     
             st.rerun()
     
-    # Main content area
-    if not api_key:
+    # Main content area - Show warnings but don't return early
+    has_api_key = bool(api_key and api_key.strip())
+    has_credentials = 'credentials' in st.session_state
+    
+    if not has_api_key:
         st.warning("⚠️ Please enter your Gemini API Key in the sidebar to continue.")
         st.markdown('<div class="info-box">🔐 <b>How to get an API Key:</b><br>1. Go to <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a><br>2. Create or select a project<br>3. Generate API Key<br>4. Copy and paste it in the sidebar</div>', unsafe_allow_html=True)
-        return
     
     # Check if user authenticated with Google Calendar
-    if 'credentials' not in st.session_state:
+    if not has_credentials:
         st.warning("⚠️ Please authenticate with your Google Calendar in the sidebar to continue.")
-        st.markdown('<div class="info-box">📅 <b>How to authenticate:</b><br>1. Click "Start Google Authentication" in the sidebar<br>2. Sign in with your Google account<br>3. Copy the authorization code<br>4. Paste it back into the app</div>', unsafe_allow_html=True)
-        return
+        st.markdown('<div class="info-box">📅 <b>How to authenticate:</b><br>1. Click "Connect Google Calendar" in the sidebar<br>2. Sign in with your Google account<br>3. You\'ll be redirected back automatically</div>', unsafe_allow_html=True)
     
-    try:
-        service = get_calendar_service()
-        if service:
-            st.success("✅ Connected to your Google Calendar")
-        else:
-            st.error("❌ Failed to create calendar service")
-            return
-    except Exception as e:
-        st.error(f"❌ Failed to connect to Google Calendar: {str(e)}")
-        return
+    # Only proceed with calendar service if credentials exist
+    service = None
+    if has_credentials:
+    # Only proceed with calendar service if credentials exist
+    service = None
+    if has_credentials:
+        try:
+            service = get_calendar_service()
+            if service:
+                st.success("✅ Connected to your Google Calendar")
+            else:
+                st.error("❌ Failed to create calendar service")
+        except Exception as e:
+            st.error(f"❌ Failed to connect to Google Calendar: {str(e)}")
     
-    # Display current context
+    # Display current context (always show this)
     with st.expander("📋 Current Meeting Context", expanded=True):
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -419,7 +444,7 @@ def main():
         required_fields = ["title", "date", "time", "duration"]
         all_present = all(st.session_state.context.get(f) for f in required_fields)
         
-        if all_present:
+        if all_present and has_credentials and service:
             st.success("✅ All required fields present! Ready to schedule manually.")
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
@@ -472,7 +497,7 @@ def main():
             st.warning(f"⚠️ Missing required fields: {', '.join(missing)}")
             st.info("💡 Use the chat below to fill in missing details or manually edit context.")
     
-    # Chat interface
+    # Chat interface (always show this)
     st.markdown('<h2 class="sub-header">💬 Chat with Scheduler</h2>', unsafe_allow_html=True)
     
     # Display chat history
@@ -480,7 +505,7 @@ def main():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
-    # Voice input option
+    # Voice input option (always show)
     col1, col2 = st.columns([3, 1])
     with col2:
         use_voice = st.checkbox("🎤 Voice Input", help="Use your browser's microphone")
@@ -633,27 +658,33 @@ def main():
         st.markdown(voice_component, unsafe_allow_html=True)
         st.info("💡 **How to use:** Click 'Start Recording' → Speak your request → Click 'Copy Text' → Paste in chat input below")
     
-    # User input
+    # User input (always show)
     user_input = st.chat_input("Type your meeting request (e.g., 'Schedule a meeting tomorrow at 3 PM')")
     
+    # Only process input if both API key and credentials are present
     if user_input:
-        # Add user message to chat
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
-        
-        # Check if user is explicitly confirming - override AI if needed
-        user_lower = user_input.lower().strip()
-        confirmation_phrases = ["yes schedule it", "schedule it", "book it", "yes", "confirm", "go ahead", "create it", "do it"]
-        is_confirming = any(phrase in user_lower for phrase in confirmation_phrases)
-        
-        # Process with AI
-        with st.chat_message("assistant"):
-            with st.spinner("🤔 Thinking..."):
-                try:
-                    structured, free_slots, busy_slots = process_user_input(
-                        user_input, api_key, service, st.session_state.context
-                    )
+        if not has_api_key:
+            st.error("⚠️ Please enter your Gemini API Key in the sidebar first.")
+        elif not has_credentials or not service:
+            st.error("⚠️ Please connect your Google Calendar in the sidebar first.")
+        else:
+            # Add user message to chat
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            with st.chat_message("user"):
+                st.markdown(user_input)
+            
+            # Check if user is explicitly confirming - override AI if needed
+            user_lower = user_input.lower().strip()
+            confirmation_phrases = ["yes schedule it", "schedule it", "book it", "yes", "confirm", "go ahead", "create it", "do it"]
+            is_confirming = any(phrase in user_lower for phrase in confirmation_phrases)
+            
+            # Process with AI
+            with st.chat_message("assistant"):
+                with st.spinner("🤔 Thinking..."):
+                    try:
+                        structured, free_slots, busy_slots = process_user_input(
+                            user_input, api_key, service, st.session_state.context
+                        )
                     
                     reply = structured.get("reply", "I didn't quite get that. Could you try again?")
                     reason = structured.get("reason", "")
@@ -748,10 +779,7 @@ def main():
                         else:
                             st.warning("⚠️ Gemini confirmed but some required details are missing. Please continue the conversation.")
                     
-                except Exception as e:
-                    error_msg = f"❌ Error: {str(e)}"
-                    st.error(error_msg)
-                    st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
-
-if __name__ == "__main__":
-    main()
+                    except Exception as e:
+                        error_msg = f"❌ Error: {str(e)}"
+                        st.error(error_msg)
+                        st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
