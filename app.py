@@ -306,27 +306,52 @@ def main():
         api_key = st.text_input("🔑 Gemini API Key", type="password", help="Enter your Gemini API key")
         
         st.markdown("---")
-        st.subheader("� Google Calendar Setup")
+        st.subheader("📅 Google Calendar Authentication")
         
-        # Check if credentials.json exists
-        if not os.path.exists('credentials.json'):
-            st.warning("⚠️ credentials.json not found!")
-            uploaded_file = st.file_uploader("Upload credentials.json", type=['json'], help="Upload your Google Calendar API credentials file")
-            if uploaded_file is not None:
-                with open('credentials.json', 'wb') as f:
-                    f.write(uploaded_file.getbuffer())
-                st.success("✅ Credentials file uploaded! Please refresh the page.")
+        # Check if user is already authenticated
+        if 'credentials' in st.session_state:
+            st.success("✅ Connected to Google Calendar")
+            if st.button("🔓 Disconnect"):
+                del st.session_state['credentials']
+                if 'oauth_flow' in st.session_state:
+                    del st.session_state['oauth_flow']
                 st.rerun()
         else:
-            st.success("✅ credentials.json found")
-            if st.button("🔄 Re-upload credentials.json"):
-                os.remove('credentials.json')
-                if os.path.exists('token.json'):
-                    os.remove('token.json')
-                st.rerun()
+            # Step 1: Generate OAuth URL
+            if 'oauth_flow' not in st.session_state:
+                if st.button("🔐 Start Google Authentication"):
+                    try:
+                        auth_url, flow = get_oauth_url()
+                        st.session_state.oauth_flow = flow
+                        st.session_state.auth_url = auth_url
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error generating auth URL: {str(e)}")
+            
+            # Step 2: Show URL and get auth code
+            if 'auth_url' in st.session_state:
+                st.info("📋 Click the link below to authorize:")
+                st.markdown(f"[🔗 Authorize Google Calendar]({st.session_state.auth_url})")
+                
+                auth_code = st.text_input("🔑 Enter authorization code:", type="password")
+                
+                if st.button("✅ Submit Code"):
+                    if auth_code:
+                        try:
+                            creds = get_credentials_from_code(st.session_state.oauth_flow, auth_code)
+                            if creds:
+                                st.session_state.credentials = creds
+                                del st.session_state.auth_url
+                                del st.session_state.oauth_flow
+                                st.success("✅ Successfully authenticated!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+                    else:
+                        st.warning("⚠️ Please enter the authorization code")
         
         st.markdown("---")
-        st.subheader("�📍 Timezone")
+        st.subheader("📍 Timezone")
         timezone = st.selectbox("Select Timezone", ["Asia/Kolkata", "UTC", "US/Eastern", "US/Pacific", "Europe/London"])
         global TIMEZONE
         TIMEZONE = timezone
@@ -335,17 +360,12 @@ def main():
         st.subheader("📖 Instructions")
         st.info("""
         1. Enter your Gemini API Key above
-        2. Make sure credentials.json is in the project folder
+        2. Authenticate with Google Calendar
         3. Type your meeting request naturally
         4. The AI will help schedule it!
         """)
         
-        if st.button("🔄 Reset Context"):
-            if os.path.exists("context.pkl"):
-                os.remove("context.pkl")
-            # Clear session state
-            if 'meeting_scheduled' in st.session_state:
-                del st.session_state['meeting_scheduled']
+        if st.button("🔄 Reset Chat"):
             st.session_state.context = {
                 "title": None,
                 "date": (datetime.datetime.now() + datetime.timedelta(days=1)).strftime('%Y-%m-%d'),
@@ -354,7 +374,10 @@ def main():
                 "attendees": [],
                 "location": None
             }
-            st.success("Context reset!")
+            st.session_state.chat_history = []
+            st.success("Chat reset!")
+            st.rerun()
+    
             st.rerun()
     
     # Main content area
