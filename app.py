@@ -7,7 +7,7 @@ import pytz
 import pickle
 import google.generativeai as genai
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 # ------------------ 🔐 PAGE CONFIG ------------------
@@ -73,34 +73,7 @@ def load_context():
     return st.session_state.get('context', None)
 
 # ------------------ 📅 GOOGLE CALENDAR AUTH (USER-INDEPENDENT) ------------------
-def get_oauth_url():
-    """Generate OAuth URL for user authentication"""
-    # Get client config from secrets
-    client_config = {
-        "installed": {
-            "client_id": st.secrets["GOOGLE_CLIENT_ID"],
-            "client_secret": st.secrets["GOOGLE_CLIENT_SECRET"],
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob"]
-        }
-    }
-    
-    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-    flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
-    
-    auth_url, _ = flow.authorization_url(prompt='consent')
-    return auth_url, flow
-
-def get_credentials_from_code(flow, auth_code):
-    """Exchange authorization code for credentials"""
-    try:
-        flow.fetch_token(code=auth_code)
-        return flow.credentials
-    except Exception as e:
-        st.error(f"❌ Error exchanging code for token: {str(e)}")
-        return None
-
+# ------------------ 📅 GOOGLE CALENDAR AUTH (USER-INDEPENDENT) ------------------
 def get_calendar_service():
     """Get calendar service using user's credentials from session"""
     if 'credentials' not in st.session_state:
@@ -108,6 +81,49 @@ def get_calendar_service():
     
     creds = st.session_state.credentials
     return build('calendar', 'v3', credentials=creds)
+
+def handle_oauth_callback():
+    """Handle OAuth callback from URL parameters"""
+    query_params = st.query_params
+    
+    if 'code' in query_params:
+        auth_code = query_params['code']
+        
+        if 'oauth_flow' in st.session_state:
+            try:
+                flow = st.session_state.oauth_flow
+                flow.fetch_token(code=auth_code)
+                
+                st.session_state.credentials = flow.credentials
+                del st.session_state.oauth_flow
+                
+                # Clear the code from URL
+                st.query_params.clear()
+                return True
+            except Exception as e:
+                st.error(f"❌ Authentication error: {str(e)}")
+                return False
+    return False
+
+def start_oauth_flow():
+    """Start OAuth flow for web application"""
+    client_config = {
+        "web": {
+            "client_id": st.secrets["GOOGLE_CLIENT_ID"],
+            "client_secret": st.secrets["GOOGLE_CLIENT_SECRET"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [st.secrets.get("REDIRECT_URI", "https://smart-scheduler-agent-by-prasanjeet-azxhkuyngdnymfyttph9fd.streamlit.app")]
+        }
+    }
+    
+    flow = Flow.from_client_config(client_config, scopes=SCOPES)
+    flow.redirect_uri = st.secrets.get("REDIRECT_URI", "https://smart-scheduler-agent-by-prasanjeet-azxhkuyngdnymfyttph9fd.streamlit.app")
+    
+    auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+    
+    st.session_state.oauth_flow = flow
+    return auth_url
 
 # ------------------ 📅 GET FREE & BUSY SLOTS ------------------
 def get_free_and_busy_slots(service, date_str, duration_min=60):
@@ -283,6 +299,11 @@ def process_user_input(user_input, api_key, service, context):
 
 # ------------------ 🎯 MAIN APP ------------------
 def main():
+    # Handle OAuth callback first
+    if handle_oauth_callback():
+        st.success("✅ Successfully authenticated with Google Calendar!")
+        st.rerun()
+    
     st.markdown('<h1 class="main-header">📅 Smart Scheduler AI Agent</h1>', unsafe_allow_html=True)
     st.markdown("### Voice-enabled AI agent that helps schedule meetings through natural conversation")
     
@@ -317,38 +338,14 @@ def main():
                     del st.session_state['oauth_flow']
                 st.rerun()
         else:
-            # Step 1: Generate OAuth URL
-            if 'oauth_flow' not in st.session_state:
-                if st.button("🔐 Start Google Authentication"):
-                    try:
-                        auth_url, flow = get_oauth_url()
-                        st.session_state.oauth_flow = flow
-                        st.session_state.auth_url = auth_url
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error generating auth URL: {str(e)}")
-            
-            # Step 2: Show URL and get auth code
-            if 'auth_url' in st.session_state:
-                st.info("📋 Click the link below to authorize:")
-                st.markdown(f"[🔗 Authorize Google Calendar]({st.session_state.auth_url})")
-                
-                auth_code = st.text_input("🔑 Enter authorization code:", type="password")
-                
-                if st.button("✅ Submit Code"):
-                    if auth_code:
-                        try:
-                            creds = get_credentials_from_code(st.session_state.oauth_flow, auth_code)
-                            if creds:
-                                st.session_state.credentials = creds
-                                del st.session_state.auth_url
-                                del st.session_state.oauth_flow
-                                st.success("✅ Successfully authenticated!")
-                                st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error: {str(e)}")
-                    else:
-                        st.warning("⚠️ Please enter the authorization code")
+            # Start OAuth flow
+            if st.button("🔐 Connect Google Calendar"):
+                try:
+                    auth_url = start_oauth_flow()
+                    st.markdown(f"### 🔗 [Click here to authorize]({auth_url})")
+                    st.info("After authorizing, you'll be redirected back automatically.")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
         
         st.markdown("---")
         st.subheader("📍 Timezone")
