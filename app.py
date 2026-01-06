@@ -78,13 +78,24 @@ def load_context():
 # ------------------ 📅 GOOGLE CALENDAR AUTH ------------------
 def get_calendar_service():
     creds = None
-    if os.path.exists('token.json'):
+    
+    # Try to get credentials from Streamlit secrets first (for cloud deployment)
+    if 'google_credentials' in st.secrets:
+        creds_dict = dict(st.secrets['google_credentials'])
+        creds = Credentials.from_authorized_user_info(creds_dict, SCOPES)
+    # Fall back to token.json (for local development)
+    elif os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    # Last resort: try OAuth flow (only works locally)
     else:
-        flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-        creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+        if os.path.exists('credentials.json'):
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
+        else:
+            raise Exception("No credentials found. Please add google_credentials to Streamlit secrets or provide credentials.json")
+    
     return build('calendar', 'v3', credentials=creds)
 
 # ------------------ 📅 GET FREE & BUSY SLOTS ------------------
