@@ -65,37 +65,48 @@ TIMEZONE = "Asia/Kolkata"
 
 # ------------------ 💾 CONTEXT MEMORY ------------------
 def save_context(ctx):
-    with open("context.pkl", "wb") as f:
-        pickle.dump(ctx, f)
+    """Save context to session state instead of file for user independence"""
+    st.session_state.context = ctx
 
 def load_context():
+    """Load context from session state"""
+    return st.session_state.get('context', None)
+
+# ------------------ 📅 GOOGLE CALENDAR AUTH (USER-INDEPENDENT) ------------------
+def get_oauth_url():
+    """Generate OAuth URL for user authentication"""
+    # Get client config from secrets
+    client_config = {
+        "installed": {
+            "client_id": st.secrets["GOOGLE_CLIENT_ID"],
+            "client_secret": st.secrets["GOOGLE_CLIENT_SECRET"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob"]
+        }
+    }
+    
+    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+    flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+    
+    auth_url, _ = flow.authorization_url(prompt='consent')
+    return auth_url, flow
+
+def get_credentials_from_code(flow, auth_code):
+    """Exchange authorization code for credentials"""
     try:
-        with open("context.pkl", "rb") as f:
-            return pickle.load(f)
-    except:
+        flow.fetch_token(code=auth_code)
+        return flow.credentials
+    except Exception as e:
+        st.error(f"❌ Error exchanging code for token: {str(e)}")
         return None
 
-# ------------------ 📅 GOOGLE CALENDAR AUTH ------------------
 def get_calendar_service():
-    creds = None
+    """Get calendar service using user's credentials from session"""
+    if 'credentials' not in st.session_state:
+        return None
     
-    # Try to get credentials from Streamlit secrets first (for cloud deployment)
-    if 'google_credentials' in st.secrets:
-        creds_dict = dict(st.secrets['google_credentials'])
-        creds = Credentials.from_authorized_user_info(creds_dict, SCOPES)
-    # Fall back to token.json (for local development)
-    elif os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    # Last resort: try OAuth flow (only works locally)
-    else:
-        if os.path.exists('credentials.json'):
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
-        else:
-            raise Exception("No credentials found. Please add google_credentials to Streamlit secrets or provide credentials.json")
-    
+    creds = st.session_state.credentials
     return build('calendar', 'v3', credentials=creds)
 
 # ------------------ 📅 GET FREE & BUSY SLOTS ------------------
@@ -352,14 +363,19 @@ def main():
         st.markdown('<div class="info-box">🔐 <b>How to get an API Key:</b><br>1. Go to <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a><br>2. Create or select a project<br>3. Generate API Key<br>4. Copy and paste it in the sidebar</div>', unsafe_allow_html=True)
         return
     
-    # Check Google Calendar credentials
-    if not os.path.exists('credentials.json'):
-        st.error("❌ credentials.json not found! Please download it from Google Cloud Console and place it in the project root.")
+    # Check if user authenticated with Google Calendar
+    if 'credentials' not in st.session_state:
+        st.warning("⚠️ Please authenticate with your Google Calendar in the sidebar to continue.")
+        st.markdown('<div class="info-box">📅 <b>How to authenticate:</b><br>1. Click "Start Google Authentication" in the sidebar<br>2. Sign in with your Google account<br>3. Copy the authorization code<br>4. Paste it back into the app</div>', unsafe_allow_html=True)
         return
     
     try:
         service = get_calendar_service()
-        st.success("✅ Connected to Google Calendar")
+        if service:
+            st.success("✅ Connected to your Google Calendar")
+        else:
+            st.error("❌ Failed to create calendar service")
+            return
     except Exception as e:
         st.error(f"❌ Failed to connect to Google Calendar: {str(e)}")
         return
